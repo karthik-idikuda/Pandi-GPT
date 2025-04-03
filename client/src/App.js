@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, User, Bot, Copy, Check, Loader } from 'lucide-react';
+import { Send, User, Bot, Copy, Check, Loader, X } from 'lucide-react';
 import axios from 'axios';
 import './App.css';
 
+// Animation variants for message transitions
 const messageVariants = {
   initial: { opacity: 0, y: 20, scale: 0.95 },
   animate: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] } },
@@ -15,8 +16,15 @@ const containerVariants = {
   animate: { opacity: 1, y: 0, transition: { duration: 0.6, ease: [0.4, 0, 0.2, 1] } }
 };
 
+// API configuration - use environment variable if available
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5001';
+
 const App = () => {
-  const [messages, setMessages] = useState([]);
+  // Load messages from localStorage if available
+  const [messages, setMessages] = useState(() => {
+    const savedMessages = localStorage.getItem('chatMessages');
+    return savedMessages ? JSON.parse(savedMessages) : [];
+  });
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -25,6 +33,7 @@ const App = () => {
   const [textareaHeight, setTextareaHeight] = useState('auto');
   const [copiedMessageId, setCopiedMessageId] = useState(null);
 
+  // Update greeting based on time of day
   useEffect(() => {
     setGreeting(getGreeting());
     const interval = setInterval(() => {
@@ -32,6 +41,11 @@ const App = () => {
     }, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // Save messages to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('chatMessages', JSON.stringify(messages));
+  }, [messages]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -57,9 +71,22 @@ const App = () => {
   };
 
   const handleCopy = (messageId, messageText) => {
-    navigator.clipboard.writeText(messageText);
-    setCopiedMessageId(messageId);
-    setTimeout(() => setCopiedMessageId(null), 2000);
+    try {
+      navigator.clipboard.writeText(messageText);
+      setCopiedMessageId(messageId);
+      setTimeout(() => setCopiedMessageId(null), 2000);
+    } catch (err) {
+      console.error('Copy failed:', err);
+      setError('Failed to copy message');
+      setTimeout(() => setError(null), 3000);
+    }
+  };
+
+  const clearChat = () => {
+    if (window.confirm('Are you sure you want to clear all messages?')) {
+      setMessages([]);
+      localStorage.removeItem('chatMessages');
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -81,10 +108,18 @@ const App = () => {
       setNewMessage('');
       setTextareaHeight('auto');
 
-      const response = await axios.post('http://localhost:5001/api/message', {
+      // Make API request with proper timeout
+      const response = await axios.post(`${API_URL}/api/message`, {
         message: userMessage.text,
         sender: 'user'
+      }, {
+        timeout: 15000 // 15 seconds timeout
       });
+
+      // Check if response contains expected data
+      if (!response.data || !response.data.botReply) {
+        throw new Error('Invalid response from server');
+      }
 
       const botMessage = {
         id: Date.now() + 1,
@@ -96,9 +131,23 @@ const App = () => {
       setMessages(prev => [...prev, botMessage]);
     } catch (error) {
       console.error('Error:', error);
-      const errorMessage = error.response 
-        ? `Server Error: ${error.response.status}` 
-        : 'Failed to connect to server';
+      
+      // Detailed error message based on the error type
+      let errorMessage = 'Failed to connect to server';
+      
+      if (error.response) {
+        // Server responded with an error status
+        const serverError = error.response.data?.error || 'Unknown server error';
+        const details = error.response.data?.details || '';
+        errorMessage = `Server Error (${error.response.status}): ${serverError}${details ? ` - ${details}` : ''}`;
+      } else if (error.request) {
+        // Request made but no response received
+        errorMessage = 'No response from server. Please check your connection.';
+      } else if (error.message) {
+        // Error setting up the request
+        errorMessage = error.message;
+      }
+      
       setError(errorMessage);
     } finally {
       setLoading(false);
@@ -121,6 +170,16 @@ const App = () => {
         <h2 className="greeting">
           {greeting}, <span className="user-name">Karthik</span> 👋
         </h2>
+        {messages.length > 0 && (
+          <motion.button
+            className="clear-chat-button"
+            onClick={clearChat}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <X size={16} /> Clear Chat
+          </motion.button>
+        )}
       </motion.div>
 
       <div className="chat-container">
@@ -134,6 +193,16 @@ const App = () => {
         </motion.div>
 
         <div className="messages-container">
+          {messages.length === 0 && (
+            <motion.div 
+              className="empty-chat-message"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { delay: 0.5 } }}
+            >
+              Send a message to start chatting with the AI
+            </motion.div>
+          )}
+          
           <AnimatePresence>
             {messages.map((message) => (
               <motion.div
@@ -155,6 +224,7 @@ const App = () => {
                       <button 
                         className="copy-button"
                         onClick={() => handleCopy(message.id, message.text)}
+                        title="Copy message"
                       >
                         {copiedMessageId === message.id ? (
                           <Check size={16} className="copied-icon" />

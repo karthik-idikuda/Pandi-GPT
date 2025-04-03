@@ -1,0 +1,8 @@
+[build]
+  command = "npm run build"  # Adjust if needed
+  publish = "client/build"   # The build folder of your frontend
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/message"  # Path to your serverless function
+  status = 200
